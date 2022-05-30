@@ -1,7 +1,8 @@
 <template>
   <div>
-    <router-link to="/demo1">demo1</router-link> |
-    <router-link to="/demo2">demo2</router-link>
+    <b-nav tabs align="center">
+      <b-nav-item v-for="(link, index) in links" :key="index"><router-link :to="link.to">{{ link.name }}</router-link></b-nav-item>
+    </b-nav>
   </div>
 </template>
 
@@ -10,7 +11,8 @@ export default {
   data(){
     return {
       links: [
-
+        {to: '/demo1', name: 'Demo1'},
+        {to: '/demo2', name: 'Demo2'},
       ]
     }
   }
