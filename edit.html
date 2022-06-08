@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="keyword" content="Symbol,XYM,NEM,XEM,MOSAIC">
+  <meta meta name="description" content="MosaSpaはSymbolの便利なツールを提供するサイトです。">
+  <link rel="canonical" href="https://ishidad2.github.io/sym-tools/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:site" content="@ishidad2">
+  <meta name="twitter:title" content="MosaSpa">
+  <meta name="twitter:description" content="MosaSpaはSymbolの便利なツールを提供するサイトです。">
+  <meta name="twitter:image" content="https://ishidad2.github.io/sym-tools/images/logo.png">
+  <link rel="shortcut icon" href="favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+  <title>MosaSpa(モザスペ)</title>
+</head>
+<body>
+  <nav class="navbar navbar-light bg-light mb-2">
+    <div class="container-fluid">
+      <a class="navbar-brand">MosaSpa(モザスペ)</a>
+    </div>
+  </nav>
+  <div class="container">
+    <form class="mb-3">
+      <div id="_data_aadress">
+        <div class="mb-3">
+          <label class="form-label" for="_data_address_show">専用データアドレス</label><img class="ms-2" src="images/loading.gif" id="_loading"/>
+          <input type="text" readonly id="_data_address_show" class="form-control">
+        </div>
+      </div>
+    </form>
+    <div id="_message_area" style="display: none;">
+      <div class="card">
+        <div id="_message"></div>
+      </div>
+      <img class="ms-2" src="images/loading.gif" id="_msg_loading"/>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.slim.js" integrity="sha256-HwWONEZrpuoh951cQD1ov2HUK5zA5DwJ1DNUXaM6FsY=" crossorigin="anonymous"></script>
+  <script src="https://xembook.github.io/nem2-browserify/symbol-sdk-2.0.0.js"></script>
+  <script src="https://riversun.github.io/jsframe/jsframe.js"></script>
+  <script>
+    const sym = require("/node_modules/symbol-sdk");
+  </script>
+  <script src="/js/sym_config.js"></script>
+  <script src="/js/util.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script>
+    const jsFrame = new JSFrame();
+    let accountRepo = null;
+    let medianFeeMultiplier = null;
+    let networkGenerationHash = null;
+    let listener = null;
+    let txRepo = null;
+    let sssAddress = null
+    let network_type = null;
+    const keyValue = "mosaspa"
+    const key = sym.KeyGenerator.generateUInt64Key("app_name");
+
+    function setState(state){
+      if(state === "INACTIVE"){
+        jsFrame.showToast({
+            html: 'SSSが有効になっていません', align: 'top', duration: 3000
+        });
+      }
+      if(state === "NONE"){
+        jsFrame.showToast({
+            html: 'SSSがinstallされていません', align: 'top', duration: 3000
+        });
+      }
+      $('#_loading').hide();
+    }
+
+    function getNodes(network_type){
+      let nodes = JP_NODES;
+      //ノード取得
+      if(network_type === sym.NetworkType.TEST_NET){
+        nodes = ['https://sym-test.opening-line.jp:3001','https://mikun-testnet.tk:3001', 'https://2.dusan.gq:3001', 'https://dai-testnet.sfn.tools:3001']
+      }
+      return nodes;
+    }
+
+    async function main(){
+      let multisigInfo=null;
+
+      //SSSからアカウント取得
+      sssAddress = sym.Address.createFromRawAddress(window.SSS.activeAddress);
+      network_type = window.SSS.activeNetworkType;
+      
+      const node = await connectNode(getNodes(network_type));
+
+      repo = new sym.RepositoryFactoryHttp(node);
+      accountRepo = repo.createAccountRepository();
+      txRepo = repo.createTransactionRepository();
+      const msigRepo = repo.createMultisigRepository();
+      const networkRepository = repo.createNetworkRepository();
+      const nsRepo = repo.createNamespaceRepository();
+      const wsEndpoint = node.replace('https', 'wss') + "/ws";
+      listener = new sym.Listener(wsEndpoint, nsRepo, WebSocket);
+
+      //手数料係数を取得
+      medianFeeMultiplier = (await networkRepository.getTransactionFees().toPromise()).medianFeeMultiplier;
+      //generationHashの取得
+      networkGenerationHash = await repo.getGenerationHash().toPromise();
+
+      //アドレスに紐づくMosaSpa用のマルチシグアドレスがあるかどうか
+      try{
+        multisigInfo = await msigRepo.getMultisigAccountInfo(sssAddress).toPromise();
+      }catch(e){
+        console.error(e);
+        addressError()
+      }
+      console.log(multisigInfo);
+      // マルチシグアドレスがある場合
+      if(multisigInfo){
+        let multisig=null;
+        for(let multisigAddress of multisigInfo.multisigAddresses){
+          console.log(multisigAddress);
+          //MosaSpa用のメタデータがあるアドレスを抽出
+          multisig = await isMosaSpeAddress(multisigAddress);
+          console.log(multisig);
+          if(multisig) {
+            break; 
+          }
+        };
+        if(multisig){
+          $('#_data_address_show').val(multisig.address);
+        }else{
+          addressError();
+        }
+      }else{
+        addressError();
+      }
+      $('#_loading').hide();
+    }
+
+    function addressError(){
+      jsFrame.showToast({
+          html: 'データアドレスが確認できません。データアドレスの作成を行ってください。', align: 'top', duration: 3000
+      });
+      setTimeout(() => {
+        window.location.href = 'create.html';
+      }, 3500);
+    }
+
+    async function isMosaSpeAddress(address){
+      const metaRepo = repo.createMetadataRepository();
+      let response = null;
+      const res = await metaRepo.search(
+        {
+          metadataType: sym.MetadataType.Account,
+          targetAddress:address,
+          sourceAddress:address,
+        }
+      ).toPromise();
+      for(let entry of res.data){
+        const metadataEntry = entry.metadataEntry;
+        console.log(metadataEntry);
+        if(metadataEntry.value === keyValue){
+          response = address;
+          break;
+        }
+      }
+      return response;
+    }
+
+    $(async ()=>{
+      setTimeout(() => {
+        try {
+          if (window.isAllowedSSS()) {
+            main();
+          } else {
+            setState('INACTIVE')
+          }
+        } catch (e) {
+          console.error(e)
+          setState('NONE')
+        }
+      }, 500);
+    });
+  </script>
+</body>
+</html>

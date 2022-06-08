@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="shortcut icon" href="favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+  <!-- <link rel="stylesheet" href="css/style.css"> -->
+  <title>MosaSpa(モザスペ)</title>
+</head>
+<body>
+  <nav class="navbar navbar-light bg-light mb-2">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/">MosaSpaMosaSpa(モザスペ)</a>
+    </div>
+  </nav>
+  <div class="container">
+    <form class="mb-3">
+      <div class="row g-2">
+        <div class="col-8">
+          <div class="mb-3">
+            <label class="form-label" for="address">アドレス</label><img class="ms-2" src="images/loading.gif" id="_loading"/>
+            <input type="text" readonly id="address" class="form-control">
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="mb-3">
+            <label class="form-label" for="network_type">ネットワーク</label>
+            <input type="text" readonly id="network_type" class="form-control">
+          </div>
+        </div>
+      </div>
+      <div id="_data_aadress_create" style="display: none;" class="mb-3">
+        <button type="button" id="_data_aadress_create_btn" class="btn btn-primary" onclick="createAccount()">アカウントを作成する</button>
+      </div>
+      <div id="_data_aadress" style="display: none;">
+        <div class="mb-3">
+          <label class="form-label" for="_data_address_show">専用データアドレス</label>
+          <input type="text" readonly id="_data_address_show" class="form-control">
+        </div>
+      </div>
+      
+      <div id="_data_address_edit" style="display: none;" class="mb-3">
+        <a href="/edit.html" id="_data_address_edit_btn" class="btn btn-success">登録状況を編集する</a>
+      </div>
+    </form>
+    <div id="_message_area" style="display: none;">
+      <div class="card">
+        <div id="_message"></div>
+      </div>
+      <img class="ms-2" src="images/loading.gif" id="_msg_loading"/>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.slim.js" integrity="sha256-HwWONEZrpuoh951cQD1ov2HUK5zA5DwJ1DNUXaM6FsY=" crossorigin="anonymous"></script>
+  <script src="https://xembook.github.io/nem2-browserify/symbol-sdk-2.0.0.js"></script>
+  <script src="https://riversun.github.io/jsframe/jsframe.js"></script>
+  <script>
+    const sym = require("/node_modules/symbol-sdk");
+  </script>
+  <script src="/js/sym_config.js"></script>
+  <script src="/js/util.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script>
+    const jsFrame = new JSFrame();
+    let accountRepo = null;
+    let medianFeeMultiplier = null;
+    let networkGenerationHash = null;
+    let listener = null;
+    let txRepo = null;
+    let new_account = null;
+    const keyValue = "mosaspa"
+    const key = sym.KeyGenerator.generateUInt64Key("app_name");
+
+    function setState(state){
+      if(state === "INACTIVE"){
+        jsFrame.showToast({
+            html: 'SSSが有効になっていません', align: 'top', duration: 3000
+        });
+      }
+      if(state === "NONE"){
+        jsFrame.showToast({
+            html: 'SSSがinstallされていません', align: 'top', duration: 3000
+        });
+      }
+      $('#_loading').hide();
+    }
+
+    function getNodes(network_type){
+      let nodes = JP_NODES;
+      //ノード取得
+      if(network_type === sym.NetworkType.TEST_NET){
+        nodes = ['https://sym-test.opening-line.jp:3001','https://mikun-testnet.tk:3001', 'https://2.dusan.gq:3001', 'https://dai-testnet.sfn.tools:3001']
+      }
+      return nodes;
+    }
+
+    function createAccount(){
+      if(new_account === null){
+        const network_type = window.SSS.activeNetworkType;
+        new_account = sym.Account.generateNewAccount(network_type);
+      }
+      createMultisig();
+    }
+
+    async function createMultisig(){
+      $('#_msg_loading').show();
+      
+      const epochAdjustment = await repo.getEpochAdjustment().toPromise();
+      const network_type = window.SSS.activeNetworkType;
+      const mosaic_id = network_type === sym.NetworkType.MAIN_NET ? "6BED913FA20223F8" : "3A8416DB2D53B6C8";
+      const owner_address = sym.Address.createFromRawAddress(window.SSS.activeAddress);
+      const metaRepo = repo.createMetadataRepository();
+      const metaService = new sym.MetadataTransactionService(metaRepo);
+
+      const metaTx = await metaService.createAccountMetadataTransaction(
+        undefined,
+        network_type,
+        new_account.address, //メタデータ記録先アドレス
+        key, keyValue, //Key-Value値
+        new_account.address //メタデータ作成者アドレス
+      ).toPromise();
+
+      const multisigTx = sym.MultisigAccountModificationTransaction.create(
+      sym.Deadline.create(epochAdjustment),
+      1,
+      1,
+      [owner_address],
+      [],
+      network_type,
+      );
+
+      const aggregateTransaction = sym.AggregateTransaction.createComplete(
+        sym.Deadline.create(epochAdjustment),
+      [
+        metaTx.toAggregate(new_account.publicAccount),
+        multisigTx.toAggregate(new_account.publicAccount),
+      ],
+      network_type,
+      [],
+      ).setMaxFeeForAggregate(100, 1);
+
+      //SSSへ署名要求
+      window.SSS.setTransaction(aggregateTransaction);
+
+      window.SSS.requestSignWithCosignatories([new_account]).then((SignedTransaction)=>{
+        console.log(SignedTransaction.hash);
+        console.log(SignedTransaction.payload);
+
+        txRepo.announce(SignedTransaction).subscribe((x)=>{
+          let message = `トランザクション確認中...<br />`;
+          message += `ページを閉じたり移動したりしないでください。<br />`;
+          $('#_message').html(message);
+
+          console.log(x);
+          listener.open().then(()=>{
+            //承認トランザクションの検知
+            listener.confirmed(new_account.address)
+            .subscribe(tx=>{
+                //受信後の処理を記述
+                console.log(tx);
+                let message = `トランザクションを確認しました。`;
+                message += `3秒後にページを更新します。<br />`;
+                $('#_message').html(message);
+                $('#_loading').hide();
+
+                setTimeout(() => {
+                  location.reload();
+                }, 3000);
+            });
+
+          });
+        },(er)=>console.log(er));
+
+      }).catch((err)=>{
+        let message = `SSSタイムアウトエラーです。<br />`;
+        message += `再度、アカウント作成ボタンを押してください。<br />`;
+        $('#_message').html(message);
+        $('#_data_aadress_create').show();
+        $('#_msg_loading').hide();
+
+      });
+      $('#_data_address_show').val(new_account.address.plain());
+      $('#_data_aadress').show();
+      $('#_data_aadress_create').hide();
+      $('#_message_area').show();
+      let message = `SSSへアカウント作成のトランザクションを送信しました。<br />`;
+      message += `SSSを開いて60秒以内に署名を行ってください。（60秒をすぎるとSSSがエラーになります）<br />`;
+      $('#_message').html(message);
+      
+      console.log("end");
+    }
+
+    async function main(){
+      let multisigInfo=null;
+
+      //SSSからアカウント取得
+      const address = sym.Address.createFromRawAddress(window.SSS.activeAddress);
+      const network_type = window.SSS.activeNetworkType;
+      
+      const node = await connectNode(getNodes(network_type));
+
+      $('#address').val(address.plain());
+      $('#network_type').val(network_type === 152 ? "TEST_NET" : "MAIN_NET");
+
+      repo = new sym.RepositoryFactoryHttp(node);
+      accountRepo = repo.createAccountRepository();
+      txRepo = repo.createTransactionRepository();
+      const msigRepo = repo.createMultisigRepository();
+      const networkRepository = repo.createNetworkRepository();
+      const nsRepo = repo.createNamespaceRepository();
+      const wsEndpoint = node.replace('https', 'wss') + "/ws";
+      listener = new sym.Listener(wsEndpoint, nsRepo, WebSocket);
+
+      //手数料係数を取得
+      medianFeeMultiplier = (await networkRepository.getTransactionFees().toPromise()).medianFeeMultiplier;
+      //generationHashの取得
+      networkGenerationHash = await repo.getGenerationHash().toPromise();
+
+      //アドレスに紐づくMosaSpa用のマルチシグアドレスがあるかどうか
+      try{
+        multisigInfo = await msigRepo.getMultisigAccountInfo(address).toPromise();
+      }catch(e){
+        console.error(e);
+        $('#_data_aadress_create').show
+      }
+      console.log(multisigInfo);
+      // マルチシグアドレスがある場合
+      if(multisigInfo){
+        let multisig=null;
+        for(let multisigAddress of multisigInfo.multisigAddresses){
+          console.log(multisigAddress);
+          //MosaSpa用のメタデータがあるアドレスを抽出
+          multisig = await isMosaSpeAddress(multisigAddress);
+          console.log(multisig);
+          if(multisig) {
+            break; 
+          }
+        };
+        if(multisig){
+          //値を確認用フォームへセット
+          $('#_data_address_show').val(multisig.address);
+          $('#_data_aadress').show();
+          //編集ボタンを表示
+          $('#_data_address_edit').show();
+        }else{
+          //紐づくマルチシグがない場合新規作成ボタンを表示
+          $('#_data_aadress_create').show();
+        }
+      }else{
+        //新規作成ボタンを表示
+        $('#_data_aadress_create').show();
+      }
+      $('#_loading').hide();
+    }
+    
+    async function isMosaSpeAddress(address){
+      const metaRepo = repo.createMetadataRepository();
+      let response = null;
+      const res = await metaRepo.search(
+        {
+          metadataType: sym.MetadataType.Account,
+          targetAddress:address,
+          sourceAddress:address,
+          scopedMetadataKey: key.toHex(),
+        }
+      ).toPromise();
+      for(let entry of res.data){
+        const metadataEntry = entry.metadataEntry;
+        console.log(metadataEntry);
+        if(metadataEntry.value === keyValue){
+          response = address;
+          break;
+        }
+      }
+      return response;
+    }
+
+    $(async ()=>{
+      setTimeout(() => {
+        try {
+          if (window.isAllowedSSS()) {
+            main();
+          } else {
+            setState('INACTIVE')
+          }
+        } catch (e) {
+          console.error(e)
+          setState('NONE')
+        }
+      }, 500);
+    });
+
+  </script>
+</body>
+</html>
