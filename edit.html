@@ -22,20 +22,36 @@
       <a class="navbar-brand">MosaSpa(モザスペ)</a>
     </div>
   </nav>
-  <div class="container">
-    <form class="mb-3">
-      <div id="_data_aadress">
-        <div class="mb-3">
-          <label class="form-label" for="_data_address_show">専用データアドレス</label><img class="ms-2" src="images/loading.gif" id="_loading"/>
-          <input type="text" readonly id="_data_address_show" class="form-control">
+  <div id="app">
+    <div class="container">
+      <form class="mb-3">
+        <div id="_data_aadress">
+          <div class="mb-3">
+            <label class="form-label" for="_data_address_show">専用データアドレス</label><img v-if="loading" class="ms-2" src="images/loading.gif" id="_loading"/>
+            <input type="text" readonly id="_data_address_show" class="form-control" v-model="dataAddress.address">
+          </div>
+        </div>
+      </form>
+      <div id="_message_area" style="display: none;">
+        <div class="card">
+          <div id="_message"></div>
         </div>
       </div>
-    </form>
-    <div id="_message_area" style="display: none;">
-      <div class="card">
-        <div id="_message"></div>
-      </div>
-      <img class="ms-2" src="images/loading.gif" id="_msg_loading"/>
+    </div>
+    <div class="container-fluid">
+      <template v-if="arrayChunk.length > 0">
+        <div class="row" v-for="mosaics in arrayChunk">
+          <div class="col" v-for="mosaic in mosaics">
+            MosaicID:{{mosaic.id.toHex()}}<br />
+            ownerAddress:{{mosaic.ownerAddress.plain()}}<br />
+            flags:{{mosaic.flags}}<br />
+            amount:{{dispAmount(mosaic)}}<br />
+            <template v-if="mosaic.dataAddressMeta.length > 0"> 
+              metadata: {{mosaic.dataAddressMeta}}
+            </template>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
@@ -48,139 +64,233 @@
   <script src="js/sym_config.js"></script>
   <script src="js/util.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
   <script>
     const jsFrame = new JSFrame();
-    let accountRepo = null;
-    let medianFeeMultiplier = null;
-    let networkGenerationHash = null;
-    let listener = null;
-    let txRepo = null;
-    let sssAddress = null
-    let network_type = null;
     const keyValue = "mosaspa"
     const key = sym.KeyGenerator.generateUInt64Key("app_name");
+    const _m = [
+      { mosaic_id: "3A8416DB2D53B6C8" },
+      { mosaic_id: "6BED913FA20223F8" },
+    ];
 
-    function setState(state){
-      if(state === "INACTIVE"){
-        jsFrame.showToast({
-            html: 'SSSが有効になっていません', align: 'top', duration: 3000
-        });
-      }
-      if(state === "NONE"){
-        jsFrame.showToast({
-            html: 'SSSがinstallされていません', align: 'top', duration: 3000
-        });
-      }
-      $('#_loading').hide();
-    }
-
-    function getNodes(network_type){
-      let nodes = JP_NODES;
-      //ノード取得
-      if(network_type === sym.NetworkType.TEST_NET){
-        nodes = ['https://sym-test.opening-line.jp:3001','https://mikun-testnet.tk:3001', 'https://2.dusan.gq:3001', 'https://dai-testnet.sfn.tools:3001']
-      }
-      return nodes;
-    }
-
-    async function main(){
-      let multisigInfo=null;
-
-      //SSSからアカウント取得
-      sssAddress = sym.Address.createFromRawAddress(window.SSS.activeAddress);
-      network_type = window.SSS.activeNetworkType;
-      
-      const node = await connectNode(getNodes(network_type));
-
-      repo = new sym.RepositoryFactoryHttp(node);
-      accountRepo = repo.createAccountRepository();
-      txRepo = repo.createTransactionRepository();
-      const msigRepo = repo.createMultisigRepository();
-      const networkRepository = repo.createNetworkRepository();
-      const nsRepo = repo.createNamespaceRepository();
-      const wsEndpoint = node.replace('https', 'wss') + "/ws";
-      listener = new sym.Listener(wsEndpoint, nsRepo, WebSocket);
-
-      //手数料係数を取得
-      medianFeeMultiplier = (await networkRepository.getTransactionFees().toPromise()).medianFeeMultiplier;
-      //generationHashの取得
-      networkGenerationHash = await repo.getGenerationHash().toPromise();
-
-      //アドレスに紐づくMosaSpa用のマルチシグアドレスがあるかどうか
-      try{
-        multisigInfo = await msigRepo.getMultisigAccountInfo(sssAddress).toPromise();
-      }catch(e){
-        console.error(e);
-        addressError()
-      }
-      console.log(multisigInfo);
-      // マルチシグアドレスがある場合
-      if(multisigInfo){
-        let multisig=null;
-        for(let multisigAddress of multisigInfo.multisigAddresses){
-          console.log(multisigAddress);
-          //MosaSpa用のメタデータがあるアドレスを抽出
-          multisig = await isMosaSpeAddress(multisigAddress);
-          console.log(multisig);
-          if(multisig) {
-            break; 
+    var app = new Vue({
+      el: '#app',
+      data: {
+        isLoading: true,
+        sssAddress: null,
+        dataAddress: { address:"" },
+        network_type: null,
+        accountRepo: null,
+        metaRepo: null,
+        txRepo: null,
+        mosaicRepository: null,
+        medianFeeMultiplier: null,
+        networkGenerationHash: null,
+        mosaic_list: [],
+        listener: null,
+        height: 1,
+        loading: true,
+      },
+      created() {
+        setTimeout(() => {
+          try {
+            if (window.isAllowedSSS()) {
+              this.main();
+            } else {
+              this.setState('INACTIVE')
+            }
+          } catch (e) {
+            console.error(e)
+            this.setState('NONE')
           }
-        };
-        if(multisig){
-          $('#_data_address_show').val(multisig.address);
-        }else{
-          addressError();
+        }, 500);
+      },
+      computed: {
+        arrayChunk: function(){
+          let tmp = this.mosaic_list.reduce((acc, value, index) => index % 3 ? acc : [...acc, this.mosaic_list.slice(index, index + 3)], []);
+          console.log(tmp);
+          return tmp;
         }
-      }else{
-        addressError();
-      }
-      $('#_loading').hide();
-    }
-
-    function addressError(){
-      jsFrame.showToast({
-          html: 'データアドレスが確認できません。データアドレスの作成を行ってください。', align: 'top', duration: 3000
-      });
-      setTimeout(() => {
-        window.location.href = 'create.html';
-      }, 3500);
-    }
-
-    async function isMosaSpeAddress(address){
-      const metaRepo = repo.createMetadataRepository();
-      let response = null;
-      const res = await metaRepo.search(
-        {
-          metadataType: sym.MetadataType.Account,
-          targetAddress:address,
-          sourceAddress:address,
-        }
-      ).toPromise();
-      for(let entry of res.data){
-        const metadataEntry = entry.metadataEntry;
-        console.log(metadataEntry);
-        if(metadataEntry.value === keyValue){
-          response = address;
-          break;
-        }
-      }
-      return response;
-    }
-
-    $(async ()=>{
-      setTimeout(() => {
-        try {
-          if (window.isAllowedSSS()) {
-            main();
-          } else {
-            setState('INACTIVE')
+      },
+      methods: {
+        setState(state){
+          if(state === "INACTIVE"){
+            jsFrame.showToast({
+                html: 'SSSが有効になっていません', align: 'top', duration: 3000
+            });
           }
-        } catch (e) {
-          console.error(e)
-          setState('NONE')
-        }
-      }, 500);
-    });
+          if(state === "NONE"){
+            jsFrame.showToast({
+                html: 'SSSがinstallされていません', align: 'top', duration: 3000
+            });
+          }
+          if(state === "ADDRESS_ERROR"){
+            jsFrame.showToast({
+              html: 'データアドレスが確認できません。データアドレスの作成を行ってください。', align: 'top', duration: 3000
+            });
+          }
+          this.loading = false;
+        },
+        getNodes(network_type){
+          let nodes = JP_NODES;
+          //ノード取得
+          if(network_type === sym.NetworkType.TEST_NET){
+            nodes = ['https://sym-test.opening-line.jp:3001','https://mikun-testnet.tk:3001', 'https://2.dusan.gq:3001', 'https://dai-testnet.sfn.tools:3001']
+          }
+          return nodes;
+        },
+        connectNode(nodes) {
+          const node = nodes[Math.floor(Math.random() * nodes.length)] ;
+          console.log("try:" + node);
+            return new Promise((resolve, reject) => {
+              let req = new XMLHttpRequest();
+              req.timeout = 2000;
+              req.open('GET', node + "/node/health", true);
+              req.onload = function() {
+                if (req.status === 200) {
+                  const status = JSON.parse(req.responseText).status;
+                  if(status.apiNode == "up" && status.db == "up"){
+                      return resolve(node);
+                  }else{
+                      console.log("fail node status:" + status);
+                      return connectNode(nodes).then(node => resolve(node));
+                  }
+                } else {
+                  console.log("fail request status:" + req.status)
+                  return connectNode(nodes).then(node => resolve(node));
+                }
+              };
+              req.onerror = function(e) {
+                  console.log("onerror:" + e)
+                  return connectNode(nodes).then(node => resolve(node));
+              };
+              req.ontimeout = function (e) {
+                  console.log("ontimeout")
+                  return connectNode(nodes).then(node => resolve(node));
+              };  
+            req.send();
+          });
+        },
+        async isMosaSpeAddress(address){
+          let response = null;
+          const res = await this.metaRepo.search(
+            {
+              scopedMetadataKey: key.toHex(),
+              metadataType: sym.MetadataType.Account,
+              targetAddress:address,
+              sourceAddress:address,
+            }
+          ).toPromise();
+          for(let entry of res.data){
+            const metadataEntry = entry.metadataEntry;
+            if(metadataEntry.value === keyValue){
+              response = address;
+              break;
+            }
+          }
+          return response;
+        },
+        async getMosaics(){
+          const mosaics = (await this.accountRepo.getAccountInfo(this.sssAddress).toPromise()).mosaics;
+          for(let mosaic of mosaics){
+            this.getMosaicInfo(mosaic);
+          }
+        },
+        async getMosaicInfo(mosaic){
+          //モザイクの詳細取得
+          const mosaicId = new sym.MosaicId(mosaic.id.toHex());
+          const mosaicInfo = await this.mosaicRepository.getMosaic(mosaicId).toPromise();
+          //モザイクの期限　0:期限なし それ以外:期限あり
+          const duration = mosaicInfo.duration.compact();
+          if(duration !== 0){
+            //モザイクの期限を判断
+            const limit = mosaicInfo.duration.compact()+mosaicInfo.startHeight.compact();
+            if(this.height >= limit) {
+              console.log("モザイクの期限切れ", mosaic.id.toHex());
+              return null;  //期限切れ
+            }
+          }
+          //ブラックリストモザイクのチェック
+          if(_m.find((mos) => mos.mosaic_id === mosaic.id.toHex())){
+            console.log("ブラックリストに登録されているモザイクです");
+            return null;
+          }
+          //dataAddressのメタデータに設定されているかどうか
+          const meta = await this.metaRepo.search(
+            {
+              scopedMetadataKey: mosaic.id.toHex(),
+              targetAddress: this.dataAddress,
+            }
+          ).toPromise();
+          mosaicInfo['amount'] = mosaic.amount;
+          mosaicInfo['dataAddressMeta'] = meta.data;
+          this.mosaic_list.push(mosaicInfo);
+        },
+        dispAmount(mosaic){
+          return mosaic.amount.compact() / Math.pow(10, mosaic.divisibility);
+        },
+        async main(){
+          //SSSからアカウント取得
+          this.sssAddress = sym.Address.createFromRawAddress(window.SSS.activeAddress);
+          this.network_type = window.SSS.activeNetworkType;
+          
+          const node = await this.connectNode(this.getNodes(this.network_type));
+
+          this.repo = new sym.RepositoryFactoryHttp(node);
+          this.accountRepo = this.repo.createAccountRepository();
+          this.txRepo = this.repo.createTransactionRepository();
+          this.mosaicRepository = this.repo.createMosaicRepository();
+          const chainRepo = this.repo.createChainRepository();
+          this.height = (await chainRepo.getChainInfo().toPromise()).height.compact();
+          const msigRepo = this.repo.createMultisigRepository();
+          const networkRepository = this.repo.createNetworkRepository();
+          const nsRepo = this.repo.createNamespaceRepository();
+          const wsEndpoint = node.replace('https', 'wss') + "/ws";
+          this.listener = new sym.Listener(wsEndpoint, nsRepo, WebSocket);
+          this.metaRepo = this.repo.createMetadataRepository();
+
+
+          //手数料係数を取得
+          this.medianFeeMultiplier = (await networkRepository.getTransactionFees().toPromise()).medianFeeMultiplier;
+          //generationHashの取得
+          this.networkGenerationHash = await this.repo.getGenerationHash().toPromise();
+
+          let multisigInfo=null;
+          let multisig=null;
+
+          //アドレスに紐づくMosaSpa用のマルチシグアドレスがあるかどうか
+          try{
+            multisigInfo = await msigRepo.getMultisigAccountInfo(this.sssAddress).toPromise();
+          }catch(e){
+            console.error(e);
+          }
+          console.log(multisigInfo);
+          // マルチシグアドレスがある場合
+          if(multisigInfo){
+            for(let multisigAddress of multisigInfo.multisigAddresses){
+              console.log(multisigAddress);
+              //MosaSpa用のメタデータがあるアドレスを抽出
+              multisig = await this.isMosaSpeAddress(multisigAddress);
+              console.log(multisig);
+              if(multisig) {
+                break; 
+              }
+            };
+          }
+          if(multisig){
+            this.getMosaics();
+            this.dataAddress = multisig;
+          }else{
+            this.setState("ADDRESS_ERROR");
+            setTimeout(() => {
+              window.location.href = 'create.html';
+            }, 3500);
+          }
+          this.loading = false;
+        },
+      },
+    })
   </script>
 </body>
 </html>
