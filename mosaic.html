@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="shortcut icon" href="favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+  <title>ツール</title>
+</head>
+<body>
+  <nav class="navbar navbar-light bg-light mb-2">
+    <div class="container-fluid">
+      <a class="navbar-brand">ツール</a>
+    </div>
+  </nav>
+  <div id="app">
+    <div class="container">
+      <div class="container">
+        <form class="mb-3">
+          <div class="mb-3">
+            <label class="form-label" for="_data_address_show">SSS アドレス</label><img v-if="loading" class="ms-2" src="images/loading.gif"/>
+            <input type="text" readonly id="_data_address_show" class="form-control" v-model="sssAddress.address">
+          </div>
+        </form>
+        <div class="mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" v-model="inputForm.supplyMutable" id="supplyMutable">
+            <label class="form-check-label" for="supplyMutable">
+              供給量の変更
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" v-model="inputForm.transferable" id="transferable">
+            <label class="form-check-label" for="transferable">
+              第三者への譲渡
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" v-model="inputForm.restrictable" id="restrictable">
+            <label class="form-check-label" for="restrictable">
+              モザイク制限
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" v-model="inputForm.revokable" id="revokable">
+            <label class="form-check-label" for="revokable">
+              徴収可
+            </label>
+          </div>
+          <div class="mb-3">
+            <label for="divisibility" class="form-label">可分性: {{ inputForm.divisibility }}</label>
+            <input type="range" class="form-range" min="0" max="6" v-model="inputForm.divisibility" id="divisibility">
+          </div>
+          <div class="mb-3">
+            <label for="supply" class="form-label">発行量</label>
+            <input type="number" v-model="inputForm.supply" class="form-control" id="supply" placeholder="0">
+          </div>
+        </div>
+        <button type="button" class="btn btn-success" @click="createMosaic()" :disabled="loading">モザイク作成</button>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+  <script src="https://code.jquery.com/jquery-3.6.0.slim.js" integrity="sha256-HwWONEZrpuoh951cQD1ov2HUK5zA5DwJ1DNUXaM6FsY=" crossorigin="anonymous"></script>
+  <script src="https://xembook.github.io/nem2-browserify/symbol-sdk-2.0.0.js"></script>
+  <script src="https://riversun.github.io/jsframe/jsframe.js"></script>
+  <script>
+    const sym = require("/node_modules/symbol-sdk");
+  </script>
+  <script src="js/sym_config.js"></script>
+  <script src="js/util.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
+  <script>
+    const jsFrame = new JSFrame();
+    var app = new Vue({
+      el: '#app',
+      data: {
+        inputForm: {
+          restrictable: false,
+          revokable: false,
+          supplyMutable: false,
+          transferable: true,
+          duration: 0,
+          divisibility: 0,
+          supply: Number(0),
+        },
+        sssAddress: { address: "" },
+        network_type: null,
+        repo: null,
+        txRepo: null,
+        loading: true,
+        networkGenerationHash: null,
+        medianFeeMultiplier: null,
+      },
+      watch:{
+        'inputForm.supply': function(){
+          this.inputForm.supply = Number(this.inputForm.supply);
+        }
+      },
+      created() {
+        setTimeout(() => {
+          try {
+            if (window.isAllowedSSS()) {
+              this.main();
+            } else {
+              this.setState('INACTIVE')
+            }
+          } catch (e) {
+            console.error(e)
+            this.setState('NONE')
+          }
+        }, 500);
+      },
+      methods: {
+        setState(state){
+          if(state === "INACTIVE"){
+            jsFrame.showToast({
+                html: 'SSSが有効になっていません', align: 'top', duration: 3000
+            });
+          }
+          if(state === "NONE"){
+            jsFrame.showToast({
+                html: 'SSSがinstallされていません', align: 'top', duration: 3000
+            });
+          }
+          if(state === "ADDRESS_ERROR"){
+            jsFrame.showToast({
+              html: 'データアドレスが確認できません。データアドレスの作成を行ってください。', align: 'top', duration: 3000
+            });
+          }
+          this.loading = false;
+        },
+        getNodes(network_type){
+          let nodes = JP_NODES;
+          //ノード取得
+          if(network_type === sym.NetworkType.TEST_NET){
+            nodes = ['https://sym-test.opening-line.jp:3001','https://mikun-testnet.tk:3001', 'https://2.dusan.gq:3001', 'https://dai-testnet.sfn.tools:3001']
+          }
+          return nodes;
+        },
+        connectNode(nodes) {
+          const node = nodes[Math.floor(Math.random() * nodes.length)] ;
+          console.log("try:" + node);
+            return new Promise((resolve, reject) => {
+              let req = new XMLHttpRequest();
+              req.timeout = 2000;
+              req.open('GET', node + "/node/health", true);
+              req.onload = function() {
+                if (req.status === 200) {
+                  const status = JSON.parse(req.responseText).status;
+                  if(status.apiNode == "up" && status.db == "up"){
+                      return resolve(node);
+                  }else{
+                      console.log("fail node status:" + status);
+                      return connectNode(nodes).then(node => resolve(node));
+                  }
+                } else {
+                  console.log("fail request status:" + req.status)
+                  return connectNode(nodes).then(node => resolve(node));
+                }
+              };
+              req.onerror = function(e) {
+                  console.log("onerror:" + e)
+                  return connectNode(nodes).then(node => resolve(node));
+              };
+              req.ontimeout = function (e) {
+                  console.log("ontimeout")
+                  return connectNode(nodes).then(node => resolve(node));
+              };  
+            req.send();
+          });
+        },
+        async createMosaic(){
+          console.log(this.inputForm);
+          //モザイク定義
+          const epochAdjustment = await this.repo.getEpochAdjustment().toPromise();
+          const nonce = sym.MosaicNonce.createRandom();
+          const mosaicDefTx = sym.MosaicDefinitionTransaction.create(
+              undefined,
+              nonce,
+              sym.MosaicId.createFromNonce(nonce, this.sssAddress), //モザイクID
+              sym.MosaicFlags.create(this.inputForm.supplyMutable, this.inputForm.transferable, this.inputForm.restrictable, this.inputForm.revokable),
+              this.inputForm.divisibility,//divisibility:可分性
+              sym.UInt64.fromUint(this.inputForm.duration), //duration:有効期限
+              this.network_type
+          );
+          //モザイク変更
+          const mosaicChangeTx = sym.MosaicSupplyChangeTransaction.create(
+              undefined,
+              mosaicDefTx.mosaicId,
+              sym.MosaicSupplyChangeAction.Increase,
+              sym.UInt64.fromUint(this.inputForm.supply * Math.pow(10, this.inputForm.divisibility)),
+              this.network_type
+          );
+
+          const aggregateTx = sym.AggregateTransaction.createComplete(
+            sym.Deadline.create(epochAdjustment),
+            [
+              mosaicDefTx.toAggregate(
+                sym.PublicAccount.createFromPublicKey(
+                  window.SSS.activePublicKey,
+                  this.network_type
+                )
+              ),
+              mosaicChangeTx.toAggregate(
+                sym.PublicAccount.createFromPublicKey(
+                  window.SSS.activePublicKey,
+                  this.network_type
+                )
+              ),
+            ],
+            this.network_type,[],
+          ).setMaxFeeForAggregate(this.medianFeeMultiplier, 0);
+          
+          //  SSSへ署名要求
+          window.SSS.setTransaction(aggregateTx);
+
+          window.SSS.requestSign().then((signedTx) => {
+            console.log(signedTx);
+            this.txRepo.announce(signedTx).subscribe((x)=>{console.log(x)},(er)=>console.log(er));
+          }).catch((err)=>{
+            jsFrame.showToast({
+                html: 'SSSタイムアウトエラー', align: 'top', duration: 3000
+            });
+          });
+        },
+        async main(){
+          //SSSからアカウント取得
+          this.sssAddress = sym.Address.createFromRawAddress(window.SSS.activeAddress);
+          this.network_type = window.SSS.activeNetworkType;
+          
+          const node = await this.connectNode(this.getNodes(this.network_type));
+
+          this.repo = new sym.RepositoryFactoryHttp(node);
+          this.txRepo = this.repo.createTransactionRepository();
+          const networkRepository = this.repo.createNetworkRepository();
+
+          //手数料係数を取得
+          this.medianFeeMultiplier = (await networkRepository.getTransactionFees().toPromise()).medianFeeMultiplier;
+          this.loading = false;
+        },
+      },
+    });
+  </script>
+</body>
+</html>
