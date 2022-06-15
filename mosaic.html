@@ -17,6 +17,7 @@
   <div id="app">
     <div class="container">
       <div class="container">
+        ※現在SSS（で使用中のライブラリ）がRevokable属性に対応していないため使用中止
         <form class="mb-3">
           <div class="mb-3">
             <label class="form-label" for="_data_address_show">SSS アドレス</label><img v-if="loading" class="ms-2" src="images/loading.gif"/>
@@ -57,7 +58,7 @@
             <input type="number" v-model="inputForm.supply" class="form-control" id="supply" placeholder="0">
           </div>
         </div>
-        <button type="button" class="btn btn-success" @click="createMosaic()" :disabled="loading">モザイク作成</button>
+        <!-- <button type="button" class="btn btn-success" @click="createMosaic()" :disabled="loading">モザイク作成</button> -->
       </div>
     </div>
   </div>
