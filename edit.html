@@ -27,7 +27,7 @@
       <form class="mb-3">
         <div id="_data_aadress">
           <div class="mb-3">
-            <label class="form-label" for="_data_address_show">専用データアドレス</label><img v-if="loading" class="ms-2" src="images/loading.gif" id="_loading"/>
+            <label class="form-label" for="_data_address_show">専用データアドレス</label><img v-if="loading" class="ms-2" src="images/loading.gif"/>
             <input type="text" readonly id="_data_address_show" class="form-control" v-model="dataAddress.address">
           </div>
         </div>
@@ -41,14 +41,40 @@
     <div class="container-fluid">
       <template v-if="arrayChunk.length > 0">
         <div class="row" v-for="mosaics in arrayChunk">
-          <div class="col" v-for="mosaic in mosaics">
-            MosaicID:{{mosaic.id.toHex()}}<br />
-            ownerAddress:{{mosaic.ownerAddress.plain()}}<br />
-            flags:{{mosaic.flags}}<br />
-            amount:{{dispAmount(mosaic)}}<br />
-            <template v-if="mosaic.dataAddressMeta.length > 0"> 
-              metadata: {{mosaic.dataAddressMeta}}
-            </template>
+          <div class="col-sm-4" v-for="(mosaic,index) in mosaics">
+            <div class="card mb-2">
+              <div class="row g-0">
+                <div class="col-md-4">
+                  <img :src="showImage(mosaic)" class="img-fluid" alt="イメージ">
+                </div>
+                <div class="col-md-8">
+                  <div class="card-body">
+                    <h5 class="card-title">{{ mosaic.id.toHex() }}</h5>
+                    <div class="card-text">
+                      有効期限: {{ mosaic.duration.compact() === 0 ? "無期限" : "期限あり" }}<br />
+                      制限可: {{ mosaic.flags.restrictable }}<br />
+                      回収可: {{ mosaic.flags.revokable }}<br />
+                      発行量可変: {{ mosaic.flags.supplyMutable }}<br />
+                      転送可: {{ mosaic.flags.transferable }}<br />
+                      残数: {{dispAmount(mosaic)}}<br />
+                      保有人数: {{ mosaic.owned.length }}人 
+                      <button v-if="isRevmoke(mosaic)" type="button" class="btn btn-link" @click="revoke(mosaic.owned)">[一括回収]</button><br />
+                    </div>
+                    <div class="mb-2">
+                      <a v-if="mosaic.owned.length > 0" data-bs-toggle="collapse" :href="`#collapse-${index}`" aria-expanded="false" :aria-controls="`collapse-${index}`">
+                        保有アドレス一覧
+                      </a>
+                      <div class="collapse" :id="`collapse-${index}`">
+                        <div class="card-text mb-2">
+                          <small class="text-muted" v-for="owned in mosaic.owned">{{ owned.address.plain() }}</small>
+                        </div>
+                      </div>
+                    </div>
+                    <button type="button" class="btn btn-primary">掲載情報詳細</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -68,7 +94,7 @@
   <script>
     const jsFrame = new JSFrame();
     const keyValue = "mosaspa"
-    const key = sym.KeyGenerator.generateUInt64Key("app_name");
+    const AppKey = sym.KeyGenerator.generateUInt64Key("app_name");
     const _m = [
       { mosaic_id: "3A8416DB2D53B6C8" },
       { mosaic_id: "6BED913FA20223F8" },
@@ -108,9 +134,7 @@
       },
       computed: {
         arrayChunk: function(){
-          let tmp = this.mosaic_list.reduce((acc, value, index) => index % 3 ? acc : [...acc, this.mosaic_list.slice(index, index + 3)], []);
-          console.log(tmp);
-          return tmp;
+          return this.mosaic_list.reduce((acc, value, index) => index % 3 ? acc : [...acc, this.mosaic_list.slice(index, index + 3)], []);
         }
       },
       methods: {
@@ -172,7 +196,10 @@
             req.send();
           });
         },
-        async isMosaSpeAddress(address){
+        isRevmoke(mosaic){
+          return (mosaic.owned.length > 0 && mosaic.flags.revokable) ? true : false
+        },
+        async isMosaSpeAddress(address, key){
           let response = null;
           const res = await this.metaRepo.search(
             {
@@ -201,6 +228,7 @@
           //モザイクの詳細取得
           const mosaicId = new sym.MosaicId(mosaic.id.toHex());
           const mosaicInfo = await this.mosaicRepository.getMosaic(mosaicId).toPromise();
+          console.log(mosaicInfo);
           //モザイクの期限　0:期限なし それ以外:期限あり
           const duration = mosaicInfo.duration.compact();
           if(duration !== 0){
@@ -223,12 +251,27 @@
               targetAddress: this.dataAddress,
             }
           ).toPromise();
+          const _mosaic_owned = await this.accountRepo.search(
+            {
+              mosaicId: mosaic.id,
+            }
+          ).toPromise();
+          const ownedData = _mosaic_owned.data.filter((val) => val.address.plain() !== this.sssAddress.plain());
+          console.log(ownedData);
           mosaicInfo['amount'] = mosaic.amount;
           mosaicInfo['dataAddressMeta'] = meta.data;
+          mosaicInfo['owned'] = ownedData;
           this.mosaic_list.push(mosaicInfo);
         },
         dispAmount(mosaic){
           return mosaic.amount.compact() / Math.pow(10, mosaic.divisibility);
+        },
+        showImage(mosaic){
+          console.log('dataAddressMeta',mosaic.dataAddressMeta);
+          return mosaic.dataAddressMeta.length > 0 ? 'images/logo.png' : 'images/noimage.png';
+        },
+        revoke(addresses){
+          console.log(addresses);
         },
         async main(){
           //SSSからアカウント取得
@@ -271,8 +314,8 @@
             for(let multisigAddress of multisigInfo.multisigAddresses){
               console.log(multisigAddress);
               //MosaSpa用のメタデータがあるアドレスを抽出
-              multisig = await this.isMosaSpeAddress(multisigAddress);
-              console.log(multisig);
+              multisig = await this.isMosaSpeAddress(multisigAddress, AppKey);
+              console.log("multisig",multisig);
               if(multisig) {
                 break; 
               }
