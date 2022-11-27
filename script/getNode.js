@@ -1,13 +1,20 @@
 import axios from "axios";
 import fs from 'fs';
 
+//メインネット設定
 const _peer_url = "https://symbol.services/nodes?filter=suggested&ssl=true&limit=2000";
+const NETWORK_IDENTIFIER = 104;
+
+//テストネット設定
+// const _peer_url = "https://testnet.symbol.services/nodes?filter=suggested&ssl=true&limit=2000";
+// const NETWORK_IDENTIFIER = 152;
+
 const protcol = "https://";
 const port = ":3001";
+
 let nount = 1;
-const REST_VERSION = "2.4.0";
+const REST_VERSION = "2.4.2";
 const COUNTRY = "Japan";
-const NETWORK_IDENTIFIER = 104;
 
 axios.get(_peer_url)
 .then((response) => {
